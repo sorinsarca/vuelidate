@@ -7,3 +7,4 @@ test/unit/coverage
 gh-pages
 yarn.lock
 *.tgz
+.idea/
