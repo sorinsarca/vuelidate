@@ -1,4 +1,4 @@
-import {h, patchChildren} from './vval'
+import { h, patchChildren } from './vval'
 
 const NUL = () => null
 
@@ -19,6 +19,33 @@ function isPromise (object) {
   return isObject(object) && isFunction(object.then)
 }
 
+function merge (a, b) {
+  if (!isObject(b)) {
+    return a
+  }
+
+  const keys = Object.keys(b)
+  const length = keys.length
+  if (length === 0) {
+    return a
+  }
+
+  a = {...a}
+
+  for (let i = 0; i < length; i++) {
+    if (!a.hasOwnProperty(keys[i]) || !isObject(a[keys[i]])) {
+      a[keys[i]] = b[keys[i]]
+      continue
+    }
+
+    if (isObject(b[keys[i]])) {
+      a[keys[i]] = merge(a[keys[i]], b[keys[i]])
+    }
+  }
+
+  return a
+}
+
 const getPath = (ctx, obj, path, fallback) => {
   if (typeof path === 'function') {
     return path.call(ctx, obj, fallback)
@@ -36,9 +63,10 @@ const getPath = (ctx, obj, path, fallback) => {
   return typeof obj === 'undefined' ? fallback : obj
 }
 
-import {withParams, pushParams, popParams} from './params'
+import { withParams, pushParams, popParams } from './params'
 
 const __isVuelidateAsyncVm = '__isVuelidateAsyncVm'
+
 function makePendingAsyncVm (Vue, promise) {
   const asyncVm = new Vue({
     data: {
@@ -82,10 +110,10 @@ const validationGetters = {
   },
   $pending () {
     return this.ruleKeys.some(key => this.getRef(key).$pending) ||
-           this.nestedKeys.some(key => this.refProxy(key).$pending)
+      this.nestedKeys.some(key => this.refProxy(key).$pending)
   },
   $params () {
-    const vals = this.validations
+    const vals = this.allValidations
     return {
       ...buildFromKeys(this.nestedKeys, key => vals[key] && vals[key].$params || null),
       ...buildFromKeys(this.ruleKeys, key => this.getRef(key).$params)
@@ -120,7 +148,7 @@ const validationMethods = {
         }
         params = params.concat(childParams)
       } else {
-        params.push({ path: [], name: key, params: this.$params[key] })
+        params.push({path: [], name: key, params: this.$params[key]})
       }
     }
     return params
@@ -198,7 +226,7 @@ const getComponent = (Vue) => {
             : rawParams.$sub[0]
           : null
 
-        return { output, params }
+        return {output, params}
       }
     },
     computed: {
@@ -246,11 +274,24 @@ const getComponent = (Vue) => {
         return this.refs[key]
       },
       isNested (key) {
-        return typeof this.validations[key] !== 'function'
+        return typeof this.allValidations[key] !== 'function'
       }
     },
     computed: {
       ...validationGetters,
+      allValidations () {
+        const v = this.validations
+
+        if (!v || !isFunction(v.$subvalidator)) {
+          return v
+        }
+
+        const s = v.$subvalidator
+        const r = {...v}
+        delete r.$subvalidator
+
+        return merge(r, s())
+      },
       nestedKeys () {
         return this.keys.filter(this.isNested)
       },
@@ -258,7 +299,7 @@ const getComponent = (Vue) => {
         return this.keys.filter(k => !this.isNested(k))
       },
       keys () {
-        return Object.keys(this.validations).filter(k => k !== '$params')
+        return Object.keys(this.allValidations).filter(k => k !== '$params')
       },
       proxy () {
         const keyDefs = buildFromKeys(this.keys, key => ({
@@ -295,14 +336,14 @@ const getComponent = (Vue) => {
   const GroupValidation = Validation.extend({
     methods: {
       isNested (key) {
-        return typeof this.validations[key]() !== 'undefined'
+        return typeof this.allValidations[key]() !== 'undefined'
       },
       getRef (key) {
         const vm = this
         return {
           get proxy () {
             // default to invalid
-            return vm.validations[key]() || false
+            return vm.allValidations[key]() || false
           }
         }
       }
@@ -320,20 +361,20 @@ const getComponent = (Vue) => {
         }
       },
       tracker () {
-        const trackBy = this.validations.$trackBy
+        const trackBy = this.allValidations.$trackBy
         return trackBy
-            ? key => `${getPath(this.rootModel, this.getModelKey(key), trackBy)}`
-            : x => `${x}`
+          ? key => `${getPath(this.rootModel, this.getModelKey(key), trackBy)}`
+          : x => `${x}`
       },
       eagerParentModel () {
         const parent = this.lazyParentModel()
         return () => parent
       },
       children () {
-        const def = this.validations
+        const def = this.allValidations
         const model = this.getModel()
 
-        const validations = { ...def }
+        const validations = {...def}
         delete validations['$trackBy']
 
         let usedTracks = {}
@@ -367,14 +408,14 @@ const getComponent = (Vue) => {
   const renderNested = (vm, key) => {
     if (key === '$each') {
       return h(EachValidation, key, {
-        validations: vm.validations[key],
+        validations: vm.allValidations[key],
         lazyParentModel: vm.lazyParentModel,
         prop: key,
         lazyModel: vm.getModel,
         rootModel: vm.rootModel
       })
     }
-    const validations = vm.validations[key]
+    const validations = vm.allValidations[key]
     if (Array.isArray(validations)) {
       const root = vm.rootModel
       const refVals = buildFromKeys(
@@ -401,7 +442,7 @@ const getComponent = (Vue) => {
 
   const renderRule = (vm, key) => {
     return h(ValidationRule, key, {
-      rule: vm.validations[key],
+      rule: vm.allValidations[key],
       lazyParentModel: vm.lazyParentModel,
       lazyModel: vm.getModel,
       rootModel: vm.rootModel
@@ -413,6 +454,7 @@ const getComponent = (Vue) => {
 }
 
 let _cachedVue = null
+
 function getVue (rootVm) {
   if (_cachedVue) return _cachedVue
   let Vue = rootVm.constructor
